@@ -74,11 +74,12 @@ def run_training(
 
     if tc.fresh_data:
         stream = FreshExampleStream(
-            cfg.task.n_nodes, cfg.task.train_steps, tc.history_k, tc.seed, fresh_exclude or set()
+            cfg.task.n_nodes, cfg.task.train_steps, tc.history_k, tc.seed, fresh_exclude or set(),
+            tc.true_positions,
         )
         loader = DataLoader(stream, batch_size=tc.batch_size, collate_fn=collate)
     else:
-        dataset = ExampleDataset(train_instances, tc.history_k)
+        dataset = ExampleDataset(train_instances, tc.history_k, tc.true_positions)
         loader = DataLoader(
             dataset,
             batch_size=tc.batch_size,
@@ -90,11 +91,11 @@ def run_training(
 
     history: list[dict] = []
     step = examples_seen = tokens_seen = 0
-    best_val, evals_since_best, stopped_early = -1.0, 0, False
+    best_val, evals_since_best, stopped_early, out_of_time = -1.0, 0, False, False
     recent_losses: list[float] = []
     started = time.time()
     model.train()
-    while step < tc.max_steps and not stopped_early:
+    while step < tc.max_steps and not stopped_early and not out_of_time:
         for batch in loader:
             batch = {name: tensor.to(device) for name, tensor in batch.items()}
             for group in optimizer.param_groups:
@@ -112,7 +113,7 @@ def run_training(
             recent_losses.append(loss.item())
 
             if step % tc.eval_every == 0 or step == tc.max_steps:
-                val = evaluate(model, val_sets, tc.history_k)[cfg.task.train_steps]
+                val = evaluate(model, val_sets, tc.history_k, tc.true_positions)[cfg.task.train_steps]
                 history.append(
                     {
                         "step": step,
@@ -128,7 +129,7 @@ def run_training(
                     f"val final {val['final_accuracy']:.3f}  val trace {val['trace_accuracy']:.3f}"
                 )
                 if probe_sets and val["trace_accuracy"] > 0:  # pointless before 6 steps work at all
-                    probe = evaluate(model, probe_sets, tc.history_k)
+                    probe = evaluate(model, probe_sets, tc.history_k, tc.true_positions)
                     history[-1]["probe_final_accuracy"] = {
                         str(n): m["final_accuracy"] for n, m in probe.items()
                     }
@@ -142,7 +143,8 @@ def run_training(
                 elif best_val >= tc.early_stop_min_accuracy:
                     evals_since_best += 1
                     stopped_early = evals_since_best >= tc.early_stop_patience
-            if step >= tc.max_steps or stopped_early:
+            out_of_time = tc.time_limit_minutes > 0 and time.time() - started > 60 * tc.time_limit_minutes
+            if step >= tc.max_steps or stopped_early or out_of_time:
                 break
 
     log = {
@@ -150,6 +152,7 @@ def run_training(
         "device": device,
         "steps": step,
         "stopped_early": stopped_early,
+        "stopped_by_time_limit": out_of_time,
         "examples_seen": examples_seen,
         "tokens_seen": tokens_seen,
         # Rough rule of thumb: ~2 FLOPs per parameter per token forward, ~3x that with backward.
@@ -167,7 +170,7 @@ def train(cfg: ExperimentConfig) -> dict:
     estimated FLOPs seen, so runs can be compared per example and per token.
     """
     tc = cfg.train
-    out_dir = Path(cfg.results_dir) / run_id(tc.history_k, tc.n_train_instances, tc.seed)
+    out_dir = Path(cfg.results_dir) / run_id(tc.history_k, tc.n_train_instances, tc.seed, tc.true_positions)
     save_json(cfg, out_dir / "config.json")
 
     train_instances = [] if tc.fresh_data else make_train_instances(cfg)
@@ -185,7 +188,8 @@ def train(cfg: ExperimentConfig) -> dict:
     model, log = run_training(
         cfg, train_instances, val_instances, probe_sets, fresh_exclude=eval_keys | keys_of(val_instances)
     )
-    metrics = {**log, "eval": {str(n): m for n, m in evaluate(model, eval_sets, tc.history_k).items()}}
+    final = evaluate(model, eval_sets, tc.history_k, tc.true_positions)
+    metrics = {**log, "eval": {str(n): m for n, m in final.items()}}
     torch.save(model.state_dict(), out_dir / "model.pt")  # for the attention analysis; git-ignored
     save_json(metrics, out_dir / "metrics.json")  # written last: its presence marks the run as finished
     return metrics
@@ -205,6 +209,10 @@ def parse_args(argv: list[str] | None = None) -> ExperimentConfig:
                    help="pilot: new training instances every step (ignores --n-train)")
     p.add_argument("--eval-every", type=int, default=None, help="default: TrainConfig.eval_every")
     p.add_argument("--results-dir", default=None, help="default: results")
+    p.add_argument("--true-positions", action="store_true",
+                   help="position-reset control: hide history but keep tokens at their full-sequence positions")
+    p.add_argument("--time-limit-min", type=float, default=None,
+                   help="stop training after this many minutes, then evaluate and save")
     p.add_argument("--n-layers", type=int, default=None, help="default: ModelConfig.num_layers")
     p.add_argument("--n-heads", type=int, default=None, help="default: ModelConfig.num_heads")
     p.add_argument("--hidden-size", type=int, default=None, help="model width. default: ModelConfig.hidden_size")
@@ -229,6 +237,9 @@ def parse_args(argv: list[str] | None = None) -> ExperimentConfig:
         cfg.train.eval_every = args.eval_every
     if args.results_dir is not None:
         cfg.results_dir = args.results_dir
+    cfg.train.true_positions = args.true_positions
+    if args.time_limit_min is not None:
+        cfg.train.time_limit_minutes = args.time_limit_min
     if args.n_layers is not None:
         cfg.model.num_layers = args.n_layers
     if args.n_heads is not None:

@@ -215,3 +215,27 @@ papers/         PDFs (git-ignored)
   cluster scripts take `MODEL_ARGS`. `--n-layers 6 --n-heads 6 --hidden-size 384` (feed-forward width left at
   1024) gives 10,647,936 parameters; `pytest` passes (64). Nothing synced to Fir, nothing submitted. Still
   Llama/RoPE, not the paper's GPT-2 with learned absolute positions.
+- 2026-11-26 (midday): the user asked to queue the 10M reruns on whole H100s plus a position-reset test, and to
+  keep the code changes unpushed unless they are reported. Implemented, uncommitted: `--true-positions`
+  (TrainConfig.true_positions; `formats.true_position_ids`: history hidden as usual but visible tokens keep their
+  full-sequence positions; run ids get a `tp` suffix, e.g. `k1tp_n16000_s0`), `--time-limit-min` (stop, evaluate
+  and save before the Slurm limit), `EXTRA_ARGS`/`TIME_LIMIT_MIN` in `train_array.sh`, which now also runs
+  attention after training. `pytest` passes (69). Planned submissions (whole H100, NOT yet submitted because the
+  ssh connection needs Duo): Experiment A at 10M (12 runs), Experiment B at 10M (24 runs), and k=1 with true
+  positions at 24 nodes for both 10M and 4.2M (3 seeds each). Do not push these changes without the user's say.
+- 2026-11-26 ~11:30 EST: code synced to Fir (uncommitted locally, not pushed) and submitted on the user's
+  instruction, all whole H100 with the 160-minute self-stop: 6343650 `expA-10m` (12 runs →
+  `results/_cluster_24nodes_6step_fresh_10m`), 6343652 `truepos-10m` (k=1 true positions, 3 seeds →
+  `..._10m_truepos`), 6343653 `truepos-4m` (same at 4.2M → `..._fresh_truepos`), 6343654 `expB-10m` (24 runs, 1-hour
+  limit → `results/_cluster_8nodes_3step_10m`). A slice check of the new options is job 6343642. The user will
+  report the current 4.2M results if these do not start within about two hours. Small tests go on slices, not the Mac.
+- 2026-11-26 15:30 EST: the user extended the wait by two hours; it ended with all four arrays (6343650, 6343652,
+  6343653, 6343654) still PENDING (reason Priority). The slice check 6344258 passed (10M needs a 20 GB slice; it runs
+  out of memory on 10 GB). The report stays on the 4.2M results; the true-positions / time-limit code is still
+  uncommitted and unpushed. The queued jobs were NOT cancelled: the user has to say whether to cancel or keep them.
+- 2026-11-26 ~17:15 EST: the report's limitations now say the position-reset test (implemented) and the 10M rerun
+  were not run for lack of GPU time. The user said to push the latest code (true positions, time limit, cluster
+  script options) and to keep the four whole-H100 arrays queued: the presentation is in a week (~2026-12-03) and any
+  results may be reported there. At 8 nodes / 3 training steps k=2 is identical to full history in training (checked
+  with `make_examples`); job 6406639 (`expB-k2`, 12 runs into `results/_cluster_8nodes_3step/`) therefore only tests
+  a 2-state window at evaluation time and is not in the report. `sweep_8nodes_array.sh` takes `KS`.

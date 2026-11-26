@@ -55,7 +55,12 @@ def edge_attention_shares(model, examples: list[Example], batch_size: int = 256)
             ids = torch.tensor(
                 [examples[i].context + [TOKEN_TO_ID["S"]] for i in chunk], dtype=torch.long, device=device
             )
-            attentions = model(input_ids=ids, output_attentions=True).attentions
+            kwargs = {}
+            if examples[chunk[0]].position_ids is not None:  # true-positions runs; +1 for the "S"
+                kwargs["position_ids"] = torch.tensor(
+                    [examples[i].position_ids[: ids.shape[1]] for i in chunk], dtype=torch.long, device=device
+                )
+            attentions = model(input_ids=ids, output_attentions=True, **kwargs).attentions
             # (batch, layers, heads, seq): the last position's attention row in every layer and head.
             last = torch.stack([a[:, :, -1, :] for a in attentions], dim=1).float().cpu()
             for row, i in enumerate(chunk):
@@ -112,7 +117,8 @@ def report_for_run(run_dir: Path, n_per_length: int = 500) -> dict:
     k = cfg.train.history_k
     return {
         str(length): attention_report(
-            model, [ex for inst in instances[:n_per_length] for ex in make_examples(inst, k)]
+            model,
+            [ex for inst in instances[:n_per_length] for ex in make_examples(inst, k, cfg.train.true_positions)],
         )
         for length, instances in eval_sets.items()
     }

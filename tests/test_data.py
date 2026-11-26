@@ -102,3 +102,17 @@ def test_fresh_stream_never_yields_an_excluded_instance():
     banned_contexts = {tuple(ex.context) for inst in drawn[::2] for ex in make_examples(inst, None)}
     got = list(itertools.islice(iter(FreshExampleStream(8, 3, None, 0, excluded)), 30))
     assert not any(tuple(e.context) in banned_contexts for e in got)
+
+
+def test_collate_carries_position_ids_only_for_true_position_examples():
+    import random
+
+    from scratchpad.task import make_instance
+
+    instances = [make_instance(8, 3, True, random.Random(i)) for i in range(4)]
+    assert "position_ids" not in collate(ExampleDataset(instances, 1).examples)
+    examples = ExampleDataset(instances, 1, true_positions=True).examples
+    batch = collate(examples)
+    assert batch["position_ids"].shape == batch["input_ids"].shape
+    for row, ex in enumerate(examples):
+        assert batch["position_ids"][row, : len(ex.position_ids)].tolist() == ex.position_ids

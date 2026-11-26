@@ -17,8 +17,10 @@ IGNORE_INDEX = -100  # label value that the cross-entropy loss skips
 class ExampleDataset(Dataset):
     """Flattened examples from a list of instances for one history k."""
 
-    def __init__(self, instances: list[Instance], k: int | None):
-        self.examples: list[Example] = [ex for inst in instances for ex in make_examples(inst, k)]
+    def __init__(self, instances: list[Instance], k: int | None, true_positions: bool = False):
+        self.examples: list[Example] = [
+            ex for inst in instances for ex in make_examples(inst, k, true_positions)
+        ]
 
     def __len__(self) -> int:
         return len(self.examples)
@@ -34,8 +36,11 @@ class FreshExampleStream(IterableDataset):
     shuffled ExampleDataset. The graphs and steps depend on the seed only, never on k (invariant 2).
     """
 
-    def __init__(self, n_nodes: int, n_steps: int, k: int | None, seed: int, exclude: set):
+    def __init__(
+        self, n_nodes: int, n_steps: int, k: int | None, seed: int, exclude: set, true_positions: bool = False
+    ):
         self.n_nodes, self.n_steps, self.k, self.seed, self.exclude = n_nodes, n_steps, k, seed, exclude
+        self.true_positions = true_positions
 
     def __iter__(self):
         rng = random.Random(f"fresh-{self.seed}")
@@ -46,14 +51,15 @@ class FreshExampleStream(IterableDataset):
             step = rng.randrange(self.n_steps)  # drawn before the exclude check so the stream is the same for every k
             if instance_key(inst) in self.exclude:
                 continue
-            yield make_examples(inst, self.k)[step]
+            yield make_examples(inst, self.k, self.true_positions)[step]
 
 
 def collate(batch: list[Example]) -> dict[str, torch.Tensor]:
     """Right-pad to the longest example.
 
     input_ids = context + target; labels = -100 on context and padding, target ids otherwise.
-    Returns input_ids, attention_mask, labels.
+    Returns input_ids, attention_mask, labels, and position_ids when the examples carry them
+    (padding gets position 0; it is masked out anyway).
     """
     max_len = max(len(ex.context) + len(ex.target) for ex in batch)
     input_ids = torch.full((len(batch), max_len), PAD_ID, dtype=torch.long)
@@ -65,7 +71,13 @@ def collate(batch: list[Example]) -> dict[str, torch.Tensor]:
         input_ids[row, :n_total] = torch.tensor(ex.context + ex.target, dtype=torch.long)
         attention_mask[row, :n_total] = 1
         labels[row, n_context:n_total] = torch.tensor(ex.target, dtype=torch.long)
-    return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
+    out = {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
+    if batch[0].position_ids is not None:
+        position_ids = torch.zeros((len(batch), max_len), dtype=torch.long)
+        for row, ex in enumerate(batch):
+            position_ids[row, : len(ex.position_ids)] = torch.tensor(ex.position_ids, dtype=torch.long)
+        out["position_ids"] = position_ids
+    return out
 
 
 def make_heldout(

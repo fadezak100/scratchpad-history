@@ -13,16 +13,17 @@
 #SBATCH --output=slurm_logs/%x_%A_%a.out
 set -euo pipefail
 
-KS=(1 0)                      # 0 means full history
+KS=(${KS:-1 0})              # 0 means full history; e.g. KS="2" with --array=0-11
 SIZES=(250 1000 4000 16000)
 SEEDS=(0 1 2)
 RESULTS_DIR=${RESULTS_DIR:-results/_cluster_8nodes_3step}
 MODEL_ARGS=${MODEL_ARGS:-}       # e.g. "--n-layers 6 --n-heads 6 --hidden-size 384"
 
 I=$SLURM_ARRAY_TASK_ID
-K=${KS[$((I % 2))]}
-N=${SIZES[$((I / 2 % 4))]}
-SEED=${SEEDS[$((I / 8))]}
+NK=${#KS[@]}
+K=${KS[$((I % NK))]}
+N=${SIZES[$((I / NK % 4))]}
+SEED=${SEEDS[$((I / (NK * 4)))]}
 
 source scripts/cluster/setup_env.sh   # virtualenv on the node-local disk
 echo "k=$K n_train=$N seed=$SEED -> $RESULTS_DIR"

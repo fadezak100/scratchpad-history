@@ -116,3 +116,40 @@ def test_model_shape_flags_override_the_defaults():
     # 6 layers / 6 heads / width 384 with the default feed-forward width is about 10.6M parameters,
     # the size of the model in Abbe et al. (2024).
     assert 10_000_000 < count_parameters(build_model(cfg.model, len(VOCAB))) < 11_000_000
+
+
+def test_true_positions_change_nothing_for_full_history_and_do_for_a_window():
+    # With full history nothing is hidden, so the control must compute exactly the same function.
+    import random
+
+    import torch
+
+    from scratchpad.data import ExampleDataset, collate
+    from scratchpad.task import make_instance
+    from scratchpad.tokens import VOCAB
+
+    torch.manual_seed(0)
+    model = build_model(ModelConfig(hidden_size=32, intermediate_size=64, num_layers=2, num_heads=2), len(VOCAB))
+    model.eval()
+    instances = [make_instance(8, 3, True, random.Random(i)) for i in range(3)]
+
+    def losses(k, true_positions):
+        batch = collate(ExampleDataset(instances, k, true_positions).examples)
+        with torch.no_grad():
+            return model(**batch).loss.item()
+
+    assert abs(losses(None, False) - losses(None, True)) < 1e-6
+    assert abs(losses(1, False) - losses(1, True)) > 1e-6
+
+
+def test_time_limit_stops_training_and_still_saves(tmp_path):
+    cfg = ExperimentConfig(results_dir=str(tmp_path))
+    cfg.task.n_eval_per_length, cfg.task.n_val, cfg.train.n_probe_per_length = 8, 8, 0
+    cfg.model = ModelConfig(hidden_size=32, intermediate_size=64, num_layers=1, num_heads=2)
+    cfg.train.n_train_instances, cfg.train.batch_size, cfg.train.device = 64, 16, "cpu"
+    cfg.train.max_steps, cfg.train.eval_every = 100000, 100000
+    cfg.train.true_positions, cfg.train.history_k = True, 1
+    cfg.train.time_limit_minutes = 0.01  # under a second
+    metrics = train(cfg)
+    assert metrics["stopped_by_time_limit"] and metrics["steps"] < 100000
+    assert (tmp_path / "k1tp_n64_s0" / "metrics.json").exists()

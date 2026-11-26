@@ -30,18 +30,26 @@ RESULTS_DIR=${RESULTS_DIR:-results/_cluster_${N_NODES}nodes_${TRAIN_STEPS}step_f
 # Model shape overrides, e.g. MODEL_ARGS="--n-layers 6 --n-heads 6 --hidden-size 384" (about 10.6M
 # parameters, the layers/heads/width of Abbe et al. 2024). Empty means the 4.2M default in config.py.
 MODEL_ARGS=${MODEL_ARGS:-}
+# Anything else for scratchpad.train, e.g. EXTRA_ARGS="--true-positions" (the position-reset control).
+EXTRA_ARGS=${EXTRA_ARGS:-}
+# Training stops itself after this many minutes and still evaluates and saves, so a run that has
+# not learned by then is recorded instead of being killed by the 3-hour limit with nothing saved.
+# Raise it together with --time.
+TIME_LIMIT_MIN=${TIME_LIMIT_MIN:-160}
 
 K=${KS[$((SLURM_ARRAY_TASK_ID % ${#KS[@]}))]}
 SEED=${SEEDS[$((SLURM_ARRAY_TASK_ID / ${#KS[@]}))]}
 
 source scripts/cluster/setup_env.sh   # virtualenv on the node-local disk
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-echo "k=$K seed=$SEED n_nodes=$N_NODES train_steps=$TRAIN_STEPS model_args=[$MODEL_ARGS] -> $RESULTS_DIR"
+echo "k=$K seed=$SEED n_nodes=$N_NODES train_steps=$TRAIN_STEPS model_args=[$MODEL_ARGS] extra=[$EXTRA_ARGS] limit=${TIME_LIMIT_MIN}min -> $RESULTS_DIR"
 
 # Train into the node-local disk and copy the finished run back, so the slow network disk is
-# written once. A run cut off by the time limit leaves nothing behind.
+# written once. A job killed by Slurm leaves nothing behind (hence TIME_LIMIT_MIN above).
 LOCAL_OUT="$SLURM_TMPDIR/out"
 python -m scratchpad.train --k "$K" --seed "$SEED" --fresh \
     --n-nodes "$N_NODES" --train-steps "$TRAIN_STEPS" --test-steps "$TEST_STEPS" \
-    --max-steps "$MAX_STEPS" --eval-every 500 --results-dir "$LOCAL_OUT" $MODEL_ARGS
+    --max-steps "$MAX_STEPS" --eval-every 500 --results-dir "$LOCAL_OUT" \
+    --time-limit-min "$TIME_LIMIT_MIN" $MODEL_ARGS $EXTRA_ARGS
+python -m scratchpad.attention --run "$LOCAL_OUT"/k*/   # edge-attention share, saved beside the run
 mkdir -p "$RESULTS_DIR" && cp -r "$LOCAL_OUT"/. "$RESULTS_DIR"/

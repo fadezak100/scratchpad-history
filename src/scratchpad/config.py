@@ -49,6 +49,13 @@ class TrainConfig:
     # Pilots only: draw new training instances at every step instead of a fixed set of
     # n_train_instances. Answers "is this task size learnable at all?"; not a sample-efficiency run.
     fresh_data: bool = False
+    # Control for the position-reset test: hide history as usual, but keep every visible token at
+    # the position it has in the full sequence (formats.true_position_ids). Identical to the
+    # default for full history.
+    true_positions: bool = False
+    # Stop training after this many minutes and still evaluate and save (0 = no limit). For cluster
+    # jobs with a wall-clock limit, where a killed job would leave nothing behind.
+    time_limit_minutes: float = 0.0
     seed: int = 0
     device: str = "auto"  # auto | cpu | mps | cuda
 

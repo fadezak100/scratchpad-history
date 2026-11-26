@@ -28,8 +28,9 @@ def pick_device(name: str = "auto") -> str:
     return "cpu"
 
 
-def run_id(k: int | None, n_train: int, seed: int) -> str:
-    return f"k{'full' if k is None else k}_n{n_train}_s{seed}"
+def run_id(k: int | None, n_train: int, seed: int, true_positions: bool = False) -> str:
+    """e.g. k1_n16000_s0; "tp" after k marks a true-positions (no position reset) run."""
+    return f"k{'full' if k is None else k}{'tp' if true_positions else ''}_n{n_train}_s{seed}"
 
 
 def save_json(obj, path: str | Path) -> None:

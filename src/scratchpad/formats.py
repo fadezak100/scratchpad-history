@@ -3,13 +3,17 @@
 Every condition produces the same kind of example: context -> next state, where
 context = question + the last k oracle states (k=None: all of them). Because each
 context starts with the question, positions reset for free (inductive re-indexing).
+
+With true_positions=True the visible tokens keep the position numbers they would have in the
+full sequence (question, then every state in order), so history is hidden but positions are
+NOT reset. This is the control that separates the two effects of the inductive scratchpad.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from .task import Instance, State, oracle_trace
-from .tokens import EDGE_LEN, encode_question, encode_state
+from .tokens import EDGE_LEN, STATE_LEN, encode_question, encode_state
 
 
 @dataclass(frozen=True)
@@ -20,6 +24,8 @@ class Example:
     current_node: int  # node the walk is at before this step
     next_node: int  # node the target state moves to
     edge_spans: dict[int, tuple[int, int]]  # source node -> [start, end) of its edge in context
+    # Position number of every token of context + target; None = 0, 1, 2, ... (positions reset).
+    position_ids: list[int] | None = None
 
 
 def history_window(n_previous: int, k: int | None) -> range:
@@ -46,9 +52,24 @@ def build_context(
     return context, edge_spans(inst)
 
 
-def make_examples(inst: Instance, k: int | None) -> list[Example]:
+def true_position_ids(n_question: int, n_previous: int, k: int | None) -> list[int]:
+    """Positions of context + target when nothing is renumbered.
+
+    The question keeps 0..n_question-1 and state i (0-based) keeps the STATE_LEN positions it has
+    in the full sequence. Covers the visible previous states and the state about to be written.
+    For k=None this is simply 0, 1, 2, ...
+    """
+    positions = list(range(n_question))
+    for i in [*history_window(n_previous, k), n_previous]:
+        start = n_question + i * STATE_LEN
+        positions.extend(range(start, start + STATE_LEN))
+    return positions
+
+
+def make_examples(inst: Instance, k: int | None, true_positions: bool = False) -> list[Example]:
     """One example per oracle step."""
     trace = oracle_trace(inst)
+    n_question = len(encode_question(inst))
     examples: list[Example] = []
     current = inst.source
     for step, state in enumerate(trace):
@@ -61,6 +82,7 @@ def make_examples(inst: Instance, k: int | None) -> list[Example]:
                 current_node=current,
                 next_node=state[0],
                 edge_spans=spans,
+                position_ids=true_position_ids(n_question, step, k) if true_positions else None,
             )
         )
         current = state[0]

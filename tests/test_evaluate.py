@@ -59,7 +59,7 @@ def test_solve_feeds_back_the_models_own_states(monkeypatch):
     script = [(wrong_node, "GO"), (inst.target, "YES")]
     seen_contexts = []
 
-    def fake_decode(model, contexts, n_tokens):
+    def fake_decode(model, contexts, n_tokens, position_ids=None):
         seen_contexts.append(contexts[0])
         return [encode_state(script[len(seen_contexts) - 1])]
 
@@ -72,9 +72,9 @@ def test_solve_feeds_back_the_models_own_states(monkeypatch):
 
 def test_solve_stops_on_format_failure_and_on_step_cap(monkeypatch):
     inst = make_instance(24, 6, True, random.Random(0))
-    monkeypatch.setattr(ev, "greedy_decode_batch", lambda m, c, n: [[0, 0, 0]] * len(c))
+    monkeypatch.setattr(ev, "greedy_decode_batch", lambda m, c, n, p=None: [[0, 0, 0]] * len(c))
     assert ev.solve(DummyModel(), inst, k=None) == [None]
-    monkeypatch.setattr(ev, "greedy_decode_batch", lambda m, c, n: [encode_state((2, "GO"))] * len(c))
+    monkeypatch.setattr(ev, "greedy_decode_batch", lambda m, c, n, p=None: [encode_state((2, "GO"))] * len(c))
     assert ev.solve(DummyModel(), inst, k=None, max_steps=7) == [(2, "GO")] * 7
 
 
@@ -87,3 +87,24 @@ def test_untrained_model_runs_end_to_end():
     report = ev.evaluate(model, {6: instances}, k=1)
     assert report[6]["n"] == 2
     assert 0.0 <= report[6]["final_accuracy"] <= 1.0
+
+
+def test_solve_with_true_positions_passes_full_sequence_positions(monkeypatch):
+    # Position-reset control: at step 2 with k=1 the visible state and the target keep the positions
+    # they have in the full sequence, so there is a gap after the question.
+    from scratchpad.tokens import STATE_LEN, encode_question
+
+    inst = make_instance(24, 6, True, random.Random(0))
+    oracle = oracle_trace(inst)
+    seen_positions = []
+
+    def fake_decode(model, contexts, n_tokens, position_ids=None):
+        seen_positions.append(position_ids[0])
+        assert len(position_ids[0]) == len(contexts[0]) + n_tokens
+        return [encode_state(oracle[len(seen_positions) - 1])]
+
+    monkeypatch.setattr(ev, "greedy_decode_batch", fake_decode)
+    assert ev.solve(DummyModel(), inst, k=1, true_positions=True) == oracle
+    q = len(encode_question(inst))
+    assert seen_positions[0] == list(range(q + STATE_LEN))  # first step: nothing hidden yet
+    assert seen_positions[2] == list(range(q)) + list(range(q + STATE_LEN, q + 3 * STATE_LEN))

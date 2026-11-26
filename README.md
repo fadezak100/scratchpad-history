@@ -40,7 +40,7 @@ if there is one, then Apple `mps`, then the CPU.
 ### 2. Check the install
 
 ```bash
-pytest                            # 64 tests, a few seconds
+pytest                            # 69 tests, a few seconds
 python scripts/smoke_overfit.py   # memorizes 100 problems (~3 min)
 ```
 
@@ -125,6 +125,8 @@ python -m scratchpad.train --k 1 --n-train 16000 --seed 0   # latest state only,
 | `--n-nodes`, `--train-steps`, `--test-steps` | task size and lengths | 8, 3, `3,4,5,6` |
 | `--max-steps`, `--eval-every` | optimizer step limit and evaluation interval | 4000, 250 |
 | `--n-layers`, `--n-heads`, `--hidden-size`, `--ffn-size` | model shape | 4, 4, 256, 1024 (4.2M parameters) |
+| `--true-positions` | position-reset control: history is hidden as usual, but visible tokens keep their full-sequence position numbers (not used for the reported results) | off |
+| `--time-limit-min` | stop, evaluate and save after this many minutes (`0` = no limit) | `0` |
 | `--results-dir` | where run folders are written | `results` |
 | `--device` | `auto`, `cpu`, `mps` or `cuda` | `auto` |
 
